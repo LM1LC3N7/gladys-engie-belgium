@@ -1,67 +1,127 @@
-# Template de démonstration
+# ENGIE Belgique pour Gladys Assistant
 
-Ceci est la documentation utilisateur de l'intégration. Gladys ré-héberge ce
-fichier et affiche un lien **Documentation** permanent vers lui dans l'écran
-de configuration (dans la langue de l'utilisateur, avec l'anglais en repli) —
-c'est au moment de configurer que l'utilisateur en a le plus besoin. Gardez
-les courtes indications d'accueil dans les blocs `section` du `config_schema`
-du manifest ; mettez ici le pas-à-pas détaillé (captures d'écran, dépannage…).
+Intégration **non officielle**, sans lien avec ENGIE. Elle utilise l'API non
+officielle de l'application ENGIE Smart (la même que la bibliothèque
+aioengiebelgium et l'intégration Home Assistant `hass-engie-be`). **Elle n'a
+jamais été testée avec un vrai compte** : les réponses d'ENGIE ont été
+reconstituées à partir de ces projets. Signalez tout problème sur GitHub.
 
-## Ce que vous obtenez
+## Ce qu'elle fait
 
-Six appareils de démonstration apparaissent après l'installation : une
-station météo (vraies données Open-Meteo), un interrupteur, une lampe
-variable, une prise connectée avec mesure de puissance, un détecteur de
-mouvement et une caméra.
+Lecture seule, toutes les 6 heures (ENGIE met ses données à jour au plus une
+fois par jour) :
 
-## Configuration
+- **Prix de l'électricité de votre contrat** (€/kWh, TVA comprise) : prix
+  simple, prix jour et prix nuit avec un compteur bi-horaire, prix de
+  l'injection si vous en avez un.
+- **Prix du gaz** (€/kWh, TVA comprise).
+- **Consommation électrique par jour**, envoyée datée au **suivi énergétique**
+  de Gladys (Gladys 5.2 ou plus récent), avec le retard d'ENGIE (en général
+  deux jours ou plus). La consommation et l'injection du dernier jour publié
+  sont aussi affichées en capteurs simples.
+- **Consommation de gaz** du dernier jour publié, en **capteur simple** : le gaz
+  n'entre jamais dans le suivi énergétique (Gladys le facturerait au tarif de
+  l'électricité).
+- **Compte** : montant ouvert à payer et prochaine échéance, montant et date de
+  la prochaine facture d'acompte.
 
-1. Ouvrez l'onglet **Configuration** de l'intégration.
-2. Renseignez la **latitude** et la **longitude** que la station météo de
-   démonstration doit observer (Paris par défaut), et choisissez votre unité
-   de température. L'**intervalle de rafraîchissement** règle la fréquence
-   de lecture de la station météo et de la puissance de la prise : toutes
-   les 5 minutes par défaut, toutes les minutes au plus.
-3. Enregistrez : les appareils apparaissent dans l'onglet **Découverte**,
-   prêts à être ajoutés.
+Rien n'est jamais modifié sur votre compte ENGIE.
 
-Le réglage **Préférer la connexion locale** pilote la prise de
-démonstration : elle affiche en badge le canal réellement utilisé (local ou
-cloud), avec un point orange quand elle fonctionne en mode dégradé (local
-refusé, bascule cloud).
+## Avant de commencer
 
-## Actions
+- Gladys 5.2.0 ou plus récent.
+- Un compte ENGIE Belgique de particulier, avec la double authentification
+  (ENGIE envoie un code par SMS ou e-mail à chaque connexion).
+- **Conseillé : un utilisateur ENGIE dédié à Gladys.** Se connecter avec le
+  même utilisateur sur engie.be ou dans l'application ENGIE Smart peut mettre
+  fin à la session de Gladys (constaté par l'intégration Home Assistant). Vous
+  pouvez créer un utilisateur supplémentaire depuis votre espace ENGIE
+  (gestion des accès) et lui donner accès à votre numéro de client.
+- La consommation par jour demande un compteur numérique.
 
-- **Tester le fournisseur météo** — effectue une requête en direct vers
-  Open-Meteo et affiche la température et l'humidité actuelles sous le
-  bouton.
-- **Identifier un appareil** — choisissez un de vos appareils dans la liste
-  et il se signale (la lampe de démonstration « clignote » dans les logs).
+## Installation
 
-## Scènes
+1. Installez l'intégration depuis le store de Gladys.
+2. Dans sa configuration, saisissez l'**e-mail** et le **mot de passe** ENGIE,
+   choisissez où va la consommation électrique (voir plus bas), puis
+   **enregistrez**.
+3. Appuyez sur **Envoyer le code de vérification** et choisissez SMS ou
+   e-mail : l'intégration se connecte et ENGIE vous envoie un code.
+4. Dans les 10 minutes, saisissez ce code dans **Vérifier le code**.
+5. La première lecture se fait aussitôt. Ajoutez les appareils depuis l'onglet
+   **Découverte** : un par compteur (électricité, gaz) et un par contrat.
 
-L'intégration ajoute ses propres cartes à l'éditeur de scènes (Gladys 5.1
-ou plus récent), dans la catégorie **Intégrations** :
+La session est ensuite gardée : pas de code aux redémarrages. Si ENGIE y met
+fin, l'état de l'intégration le dit : recommencez les étapes 3 et 4.
 
-- **Mouvement détecté** (déclencheur) — lance la scène quand un détecteur
-  de démonstration voit bouger quelque chose. Choisissez éventuellement le
-  détecteur et ce qui a bougé (personne, animal) ; laissés vides, toute
-  détection correspond. Les actions suivantes peuvent lire ce qui a bougé
-  avec `{{triggerEvent.data.target}}`.
-- **Identifier un appareil** (action) — fait se signaler l'appareil choisi.
-  Elle indique si l'appareil a pu se signaler, pour que les actions
-  suivantes puissent en dépendre.
+**Tester la connexion** lit une fois le compte avec la session gardée, sans
+code.
 
-## Tableau de bord
+## Fluvius et la consommation électrique
 
-Ajoutez le widget **État de la démo** à un tableau de bord : il affiche en
-direct la température de la station météo et la puissance de la prise du
-bureau, la connexion utilisée par la prise (en orange si dégradée) et la
-position observée. Son bouton **Identifier la lampe** fait se signaler la
-lampe de démonstration.
+Si l'intégration **Fluvius** (ou une autre intégration de compteur) envoie déjà
+votre consommation électrique au suivi énergétique, **n'utilisez pas les deux
+pour la même consommation** : elle serait comptée deux fois. Choisissez alors
+**Capteur seulement** dans « Consommation électrique par jour » **avant** de
+créer l'appareil électricité ENGIE : il n'aura pas de fonctionnalité de
+consommation pour le suivi énergétique, seulement le capteur du dernier jour
+publié. Changer ce choix ensuite demande de supprimer l'appareil et de le
+recréer.
 
-## Dépannage
+## Les appareils
 
-L'intégration journalise tout ce qu'elle fait : consultez les logs de
-l'intégration depuis l'interface Gladys (ou `docker logs` sur l'hôte) avec
-`LOG_LEVEL=debug` pour le détail complet.
+| Appareil                 | Fonctionnalités                                                                                                                                              |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| ENGIE electricity (EAN…) | Prix, prix jour, prix nuit, prix de l'injection (€/kWh) ; consommation par jour (suivi énergétique) ; consommation et injection du dernier jour publié (kWh) |
+| ENGIE gas (EAN…)         | Prix du gaz (€/kWh) ; consommation du dernier jour publié (kWh)                                                                                              |
+| ENGIE account (…)        | Montant ouvert (€), prochaine échéance, montant de l'acompte (€), prochaine facture d'acompte                                                                |
+
+Les prix présents dépendent de votre contrat au moment de créer l'appareil (un
+contrat dynamique n'a pas de prix fixe : pas de fonctionnalité de prix). Les
+prix sont des capteurs : l'intégration ne déclare pas de contrat d'énergie
+dans Gladys ; saisissez votre contrat dans le suivi énergétique si vous voulez
+le coût.
+
+## Vie privée et sécurité
+
+- Le mot de passe est gardé par Gladys dans sa base (**non chiffré**), jamais
+  réaffiché, et envoyé seulement à ENGIE (account.engie.be), quand vous
+  appuyez sur « Envoyer le code de vérification ».
+- Le **jeton de session** (refresh token) est gardé dans `/data` du conteneur
+  (fichier lisible par le seul utilisateur du conteneur), avec une empreinte
+  de l'e-mail, jamais l'e-mail ni le mot de passe. Il change à chaque
+  renouvellement.
+- Aucun e-mail, mot de passe, code, jeton ni texte renvoyé par ENGIE n'est
+  écrit dans les journaux.
+
+## Rythme et erreurs
+
+- Une lecture toutes les 6 heures ; un renouvellement de la session (sans
+  lecture de données) toutes les heures pour la garder en vie.
+- ENGIE demande de ralentir (429) : tous les appels (lectures, boutons) sont
+  suspendus le temps demandé, entre 1 minute et 6 heures, même après un
+  redémarrage.
+- Une donnée secondaire (consommation, solde, acompte, contrats) qui échoue
+  garde sa valeur précédente et ne bloque jamais les prix.
+- Une autre erreur : nouvel essai à la lecture suivante (6 heures au plus), ou
+  avec **Tester la connexion**.
+- Un jeton tout neuf refusé : nouvel essai dans 6 h, puis 12 h, puis toutes les
+  24 h.
+
+## Limites
+
+- API non officielle : ENGIE peut la changer à tout moment.
+- Jamais testé avec un vrai compte.
+- La consommation arrive avec le retard d'ENGIE ; les jours incomplets sont
+  envoyés plus tard, une fois complets.
+- Plusieurs compteurs d'électricité (ou de gaz) sur un même contrat : la
+  consommation, donnée par contrat, n'est pas répartie (seuls les prix sont
+  lus).
+- Fuseau horaire : Europe/Brussels pour les jours ; réglez Gladys sur la même
+  heure (Bruxelles, Paris, Amsterdam).
+
+## Crédits
+
+Logique portée de [aioengiebelgium](https://github.com/DaanVervacke/aioengiebelgium)
+et de [hass-engie-be](https://github.com/DaanVervacke/hass-engie-be), par Daan
+Vervacke (licence MIT, voir `THIRD_PARTY_NOTICES.md`).

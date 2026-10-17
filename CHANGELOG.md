@@ -12,44 +12,30 @@ the notes of the version's GitHub Release.
 
 ### Added
 
-- A working example of scene triggers, scene actions and dashboard widgets
-  (Gladys 5.1.0 or later).
-- `CHANGELOG.md`, rolled by the Release workflow.
-- A GitHub Release for every version, with its changelog section as notes: the
-  Gladys Supervision page links each version to the repository's releases.
-- CI runs the tests on Node 22 and 24, and builds the Docker image.
-- Dependabot keeps the npm dependencies and the GitHub Actions up to date.
-- `SECURITY.md` (how to report a vulnerability) and `CLAUDE.md` (project rules
-  for contributors and coding assistants).
-- Manifest tests: `version` matches `package.json`, `docker_image` is tagged
-  with it, descriptions hold 10 to 100 characters, placeholders are
-  multi-language objects.
-- The latitude and longitude fields show an example value as placeholder.
+- Sign-in to a residential ENGIE Belgium account with its e-mail and password,
+  as the ENGIE Smart app does (Auth0 pages, PKCE), ported from
+  aioengiebelgium. The verification code ENGIE asks for at each sign-in goes
+  through two configuration buttons: "Send the verification code" (SMS or
+  e-mail) and "Verify the code". The session is then kept in `/data` (the
+  rotated refresh token, never the e-mail nor the password); the integration
+  never signs in with the password by itself.
+- Electricity device per meter: the prices of the contract in force (single,
+  day and night with a dual-rate meter, injection; €/kWh, VAT included), the
+  daily consumption fed, dated, to the Gladys energy monitoring with
+  `publishEnergyConsumption` (Gladys 5.2+), the consumption and the injection
+  of the last published day as plain sensors.
+- "Sensor only" option for the daily electricity consumption, for homes where
+  Fluvius or another meter integration already feeds the energy monitoring.
+- Gas device per meter: the gas price and the consumption of the last
+  published day as plain sensors (never in the energy monitoring).
+- Account device per contract: the open amount and its next due date, the
+  amount and the date of the next advance invoice.
+- One read every 6 hours, a token-only refresh every hour; secondary reads
+  that fail keep their previous values; a 429 pauses every call (1 minute to
+  6 hours, kept across restarts); a refused fresh token is tried again after
+  6 h, 12 h, then every 24 h.
+- "Test the connection" button. Documentation in English, French and Dutch;
+  `THIRD_PARTY_NOTICES.md` with the MIT licenses of aioengiebelgium and
+  hass-engie-be, shipped in the image.
 
-### Changed
-
-- Node.js 22 or later is required (Node 20 is end-of-life).
-- Integration SDK 0.15.0. The tests now run against the fake Gladys of the
-  SDK, which refuses the payloads Gladys refuses.
-- The refresh interval is one minute minimum, the fastest Gladys polls a
-  device. The plug's power is only sent when it changes, and every 30
-  minutes otherwise.
-
-### Fixed
-
-- Gladys refused the devices of the Discovery tab: the weather station and
-  the plug declared their poll frequency in seconds instead of one of the
-  values Gladys accepts, and were never polled. They now poll every minute,
-  and the readings follow the refresh interval of the configuration.
-
-- The release commit no longer fails `npm run format:check`: the Release
-  workflow updates the manifest `version` and `docker_image` in place instead
-  of re-printing the whole file with `jq`.
-- The integration can write to `/data`: the image creates the directory owned
-  by the `node` user, a new Docker volume was owned by root.
-- A sub-container running the integration's own image follows it to the new
-  tag at each release, as well as in the manifest of the build summary: it kept
-  the previous tag, which may not exist on the registry. Sub-containers on a
-  third-party image (a broker, a database...) keep theirs.
-
-[Unreleased]: https://github.com/GladysAssistant/integration-template-js/commits/main
+[Unreleased]: https://github.com/LM1LC3N7/gladys-engie-belgium/commits/main
