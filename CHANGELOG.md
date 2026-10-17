@@ -34,6 +34,10 @@ the notes of the version's GitHub Release.
   that fail keep their previous values; a 429 pauses every call (1 minute to
   6 hours, kept across restarts); a refused fresh token is tried again after
   6 h, 12 h, then every 24 h.
+- Passing failures (network, 5xx) tried again after 15 min, 30 min, 1 h, 2 h
+  and 4 h; a refused password is not sent again until it changes; a waiting
+  sign-in is forgotten after 10 minutes; the user agents name the
+  integration.
 - "Test the connection" button. Documentation in English, French and Dutch;
   `THIRD_PARTY_NOTICES.md` with the MIT licenses of aioengiebelgium and
   hass-engie-be, shipped in the image.

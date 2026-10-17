@@ -194,7 +194,15 @@ export async function send(
     error.retryAfter = retryAfterMs(response.headers?.get?.('retry-after'));
     throw error;
   }
-  const text = await readBody(response, MAX_BODY_BYTES);
+  let text;
+  try {
+    text = await readBody(response, MAX_BODY_BYTES);
+  } catch (err) {
+    if (err instanceof EngieError) throw err;
+    // The connection broke or timed out while the body came.
+    const late = err?.name === 'TimeoutError' || err?.name === 'AbortError';
+    throw new EngieError(late ? 'timeout' : 'network', late ? 'timeout' : 'network error');
+  }
   const raw = response.headers?.get?.('location');
   let location;
   if (raw) {

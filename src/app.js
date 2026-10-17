@@ -8,6 +8,7 @@
 // index.js (through src/handlers.js) only wires the SDK handlers to it.
 // -----------------------------------------------------------------------------
 
+import { createHash } from 'node:crypto';
 import { createLogger } from '@gladysassistant/integration-sdk';
 import { CONSUMPTION, normalizeConfig } from './config.js';
 import {
@@ -15,13 +16,16 @@ import {
   CODE_COOLDOWN,
   KEEP_ALIVE_INTERVAL,
   MAX_INTERVALS_PER_CALL,
+  PARTIAL_DAY_AGE,
   PENDING_LIFETIME,
   POLL_INTERVAL,
   QUICK_TIMEOUT,
   RATE_LIMIT_DEFAULT,
   RATE_LIMIT_MAX,
   RATE_LIMIT_MIN,
+  RETRY_BACKOFF,
   SESSION_RETRY,
+  STOP_WAIT,
   TEST_COOLDOWN,
   TIME_ZONE,
   USAGE_DAYS,
@@ -61,6 +65,13 @@ const ANSWER_WITHIN = 50_000;
 const HEARTBEAT = 12 * 60 * 60_000;
 
 const codeOf = (err) => (err instanceof EngieError ? err.code : 'unknown');
+/** Passing failures: tried again sooner than the regular read, with a growing delay. */
+const isPassing = (err) =>
+  ['network', 'timeout', 'bad_response'].includes(codeOf(err)) ||
+  (codeOf(err) === 'http' && err.status >= 500);
+/** The credentials a refusal was for (memory only, never the password itself). */
+const fingerprint = ({ email, password }) =>
+  createHash('sha256').update(`${email}\u0000${password}`).digest('hex');
 /** A reason we can show and log: our own message, never a remote text. */
 const reasonOf = (err) =>
   err instanceof EngieError ? err.message : `internal error (${err?.name ?? 'unknown'})`;
@@ -85,7 +96,7 @@ export class EngieApp {
     this.verify = verify;
     this.client = new EngieClient({
       now,
-      onTokens: (tokens) => this.keepSession(tokens),
+      onTokens: (tokens, account) => this.keepSession(tokens, account),
       ...(refresh ? { refresh } : {}),
     });
     this.config = normalizeConfig();
@@ -113,25 +124,44 @@ export class EngieApp {
     this.started = false;
     this.lastStatus = undefined;
     this.lastTestAt = -Infinity;
+    /** Passing failures in a row (the backoff index), reset by a successful read. */
+    this.failures = 0;
+    /** The fingerprint of the credentials ENGIE refused: no new sign-in with them. */
+    this.refusedFor = undefined;
+    this.pendingTimer = undefined;
+    /** The last write to /data failed. */
+    this.storeFailed = false;
   }
 
   // --- Lifecycle -------------------------------------------------------------
 
   async start(raw = {}) {
-    this.stop();
-    await this.running?.catch(() => {});
+    // Nothing runs while the session is swapped: a read, a keep-alive refresh
+    // or a write still going on is waited for first.
+    await this.stop();
     const generation = this.generation;
     const previous = this.config.account;
     this.config = normalizeConfig(raw);
     this.memory = normalizeMemory(await this.store.load().catch(() => null));
     const now = this.now();
+    // Dates read back from /data are bounded: a broken file never blocks for long.
+    const bound = (value, max) => (value === undefined ? undefined : Math.min(value, max));
+    this.memory.rateLimitedUntil = bound(this.memory.rateLimitedUntil, now + RATE_LIMIT_MAX);
+    this.memory.sessionRetryAt = bound(
+      this.memory.sessionRetryAt,
+      now + SESSION_RETRY[SESSION_RETRY.length - 1],
+    );
+    this.memory.codeAt = bound(this.memory.codeAt, now);
     // A 429 pause survives a restart, a reconnection and a change of account.
-    this.pausedUntil = Math.max(this.pausedUntil, this.memory.rateLimitedUntil ?? 0);
+    this.pausedUntil = Math.min(
+      Math.max(this.pausedUntil, this.memory.rateLimitedUntil ?? 0),
+      now + RATE_LIMIT_MAX,
+    );
     const { account } = this.config;
     const session = this.memory.session?.account === account ? this.memory.session : null;
-    this.client.setSession(session ? { refreshToken: session.refreshToken } : null);
-    if (this.pending?.account !== account) {
-      this.pending = undefined;
+    this.client.setSession(session ? { refreshToken: session.refreshToken } : null, account);
+    if (this.pending?.account !== account || !this.pendingAlive()) {
+      this.dropPending();
     }
     if (previous !== account) {
       this.meters = new Map();
@@ -173,13 +203,44 @@ export class EngieApp {
     this.firstRun = this.tick();
   }
 
-  stop() {
+  /**
+   * Stop the timers at once, then wait (STOP_WAIT at most) for the read, the
+   * refresh and the writes to /data in progress: a rotated refresh token is
+   * never lost to a shutdown.
+   */
+  async stop() {
     this.generation += 1;
     for (const id of this.intervals) {
       this.timers.clearInterval(id);
     }
     this.intervals = [];
     this.clearWake();
+    const work = Promise.all([
+      this.running?.catch(() => {}),
+      this.client.refreshing?.catch(() => {}),
+    ]).then(() => this.store.flush?.()?.catch(() => {}));
+    let timer;
+    const late = new Promise((resolve) => {
+      timer = setTimeout(resolve, STOP_WAIT);
+      timer.unref?.();
+    });
+    try {
+      await Promise.race([work, late]);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  /** Whether the waiting sign-in is still usable (10 minutes). */
+  pendingAlive() {
+    return Boolean(this.pending) && this.now() - this.pending.at <= PENDING_LIFETIME;
+  }
+
+  /** Forget the waiting sign-in: its Auth0 cookies and PKCE verifier. */
+  dropPending() {
+    this.pending = undefined;
+    this.timers.clearTimeout(this.pendingTimer);
+    this.pendingTimer = undefined;
   }
 
   /** Resolves once the read in progress is done (tests). */
@@ -267,14 +328,27 @@ export class EngieApp {
   }
 
   async saveMemory() {
-    await this.store
-      .save(this.memory)
-      .catch((err) => this.logger.warn(`Saving the state to /data failed: ${err.message}`));
+    try {
+      await this.store.save(this.memory);
+      this.storeFailed = false;
+    } catch (err) {
+      // No path nor content in the message: the file holds the refresh token.
+      this.logger.error(`Saving the state to /data failed (${err?.code ?? err?.name ?? 'error'})`);
+      if (!this.storeFailed) {
+        this.storeFailed = true;
+        const [connected, message] = JSON.parse(this.lastStatus ?? '[false,null]');
+        await this.setStatus(connected, join(message ?? undefined, T.storeFailed));
+      }
+    }
   }
 
-  /** A new token pair: the rotated refresh token is written before any use. */
-  async keepSession(tokens) {
-    this.memory.session = { account: this.config.account, refreshToken: tokens.refreshToken };
+  /**
+   * A new token pair: the rotated refresh token is written before any use,
+   * under the account it was obtained for (never under another one).
+   */
+  async keepSession(tokens, account = this.config.account) {
+    if (account !== this.config.account) return;
+    this.memory.session = { account, refreshToken: tokens.refreshToken };
     await this.saveMemory();
   }
 
@@ -314,6 +388,7 @@ export class EngieApp {
       const limited = await this.readAll();
       if (generation !== this.generation) return;
       this.read = true;
+      this.failures = 0;
       if (this.memory.sessionRetries || this.memory.sessionRetryAt) {
         this.memory.sessionRetries = 0;
         this.memory.sessionRetryAt = undefined;
@@ -377,7 +452,12 @@ export class EngieApp {
         pricesOf(await this.client.prices(ban), today),
       );
       const days = await attempt('consumption', async () =>
-        usageDays(await this.client.usage(ban, window.start, window.end), now, TIME_ZONE),
+        usageDays(
+          await this.client.usage(ban, window.start, window.end),
+          now,
+          TIME_ZONE,
+          PARTIAL_DAY_AGE,
+        ),
       );
       const balance = await attempt('balance', async () =>
         balanceOf(await this.client.balance(ban), today),
@@ -388,8 +468,12 @@ export class EngieApp {
 
       // The meters of the agreement: the EANs of the contracts and of the prices.
       const eans = new Set([...known.keys(), ...(prices?.keys() ?? [])]);
-      const single =
-        agreement.electricity && !agreement.gas
+      // An EAN of the prices without a contract: guessed from the only energy
+      // of the agreement, and only while its contracts were never read (else
+      // it is an old or foreign one: a ghost meter would steal the usage).
+      const single = this.divisions.has(ban)
+        ? undefined
+        : agreement.electricity && !agreement.gas
           ? KIND.ELECTRICITY
           : agreement.gas && !agreement.electricity
             ? KIND.GAS
@@ -477,7 +561,17 @@ export class EngieApp {
       await this.setStatus(false, T.sessionRefused(age(wait)));
       return;
     }
-    // Any other failure: the next try is the next regular read, never sooner.
+    if (isPassing(err)) {
+      // Network, timeout, 5xx, a broken answer: 15 min, 30 min, 1 h... never
+      // later than the regular read; reset by a successful read.
+      const wait = RETRY_BACKOFF[Math.min(this.failures, RETRY_BACKOFF.length - 1)];
+      this.failures += 1;
+      this.wakeAt(now + wait);
+      this.logger.warn(`ENGIE: ${reason}; new try in ${Math.round(wait / 60_000)} min`);
+      await this.setStatus(false, T.retryIn(reason, age(wait)));
+      return;
+    }
+    // Anything else (changed pages, a 4xx): the next regular read, never sooner.
     this.logger.warn(`ENGIE: ${reason}`);
     await this.setStatus(false, code === 'login_changed' ? T.loginChanged : T.retry(reason));
   }
@@ -488,25 +582,43 @@ export class EngieApp {
       return;
     }
     const ok = T.ok({ meters: this.meters.size, accounts: this.accounts.size });
-    await this.setStatus(true, this.issues.length > 0 ? join(ok, T.partial(this.issues)) : ok);
+    await this.setStatus(
+      true,
+      join(
+        ok,
+        this.issues.length > 0 ? T.partial(this.issues) : undefined,
+        this.storeFailed ? T.storeFailed : undefined,
+      ),
+    );
   }
 
-  /** Every hour: a token-only refresh keeps the session (no data read). */
-  async keepAlive() {
+  /**
+   * Every hour: a token-only refresh keeps the session (no data read). It
+   * holds the same exclusivity as a read (`running`): a start, a button or a
+   * read never swaps the session under it.
+   */
+  keepAlive() {
     if (!this.client.hasSession || this.blocked || this.running || this.now() < this.pausedUntil) {
-      return;
+      return undefined;
     }
-    try {
-      await this.client.refresh();
-    } catch (err) {
-      const code = codeOf(err);
-      if (code === 'rate_limited' || code === 'grant_refused') {
-        await this.failed(err);
-      } else {
-        // A passing failure: the next read refreshes anyway.
-        this.logger.info(`ENGIE session refresh failed: ${reasonOf(err)}`);
+    const generation = this.generation;
+    this.running = (async () => {
+      try {
+        await this.client.refresh();
+      } catch (err) {
+        if (generation !== this.generation) return;
+        const code = codeOf(err);
+        if (code === 'rate_limited' || code === 'grant_refused') {
+          await this.failed(err);
+        } else {
+          // A passing failure: the next read refreshes anyway.
+          this.logger.info(`ENGIE session refresh failed: ${reasonOf(err)}`);
+        }
       }
-    }
+    })().finally(() => {
+      this.running = undefined;
+    });
+    return this.running;
   }
 
   // --- Gladys ----------------------------------------------------------------
@@ -561,12 +673,23 @@ export class EngieApp {
         FEATURE.DAILY_CONSUMPTION,
       );
       if (!created.has(feature)) continue;
-      try {
-        for (let i = 0; i < meter.intervals.length; i += MAX_INTERVALS_PER_CALL) {
+      const send = async (intervals) => {
+        for (let i = 0; i < intervals.length; i += MAX_INTERVALS_PER_CALL) {
           await this.gladys.publishEnergyConsumption(
             feature,
-            meter.intervals.slice(i, i + MAX_INTERVALS_PER_CALL),
+            intervals.slice(i, i + MAX_INTERVALS_PER_CALL),
           );
+        }
+      };
+      try {
+        try {
+          await send(meter.intervals);
+        } catch (err) {
+          // 400: with Gladys on a clock behind Brussels, the latest day may
+          // not be over yet for the core. Sent again without it (it comes at
+          // the next read).
+          if (err?.status !== 400 || meter.intervals.length < 2) throw err;
+          await send(meter.intervals.slice(0, -1));
         }
       } catch (err) {
         // 404: the device was deleted meanwhile.
@@ -654,7 +777,8 @@ export class EngieApp {
     if (this.blocked === 'session_refused') {
       this.memory.sessionRetryAt = this.now();
     }
-    await this.answer(this.tick({ quick: true }));
+    const result = await this.answer(this.tick({ quick: true }));
+    if (result === T.slow) return T.slow;
     return this.lastMessage ?? T.connecting;
   }
 
@@ -664,6 +788,8 @@ export class EngieApp {
     if (!fields || typeof fields !== 'object' || !CODE_CHANNELS[channel]) return T.code.needsFields;
     if (!this.config.email || !this.config.password) return T.noCredentials;
     if (this.client.hasSession && !this.blocked) return T.code.alreadyConnected;
+    // A refused password is never sent again: repeated refusals may lock the account.
+    if (this.refusedFor === fingerprint(this.config)) return T.passwordRefused;
     const paused = this.pauseMessage();
     if (paused) return paused;
     if (this.now() - (this.memory.codeAt ?? -Infinity) < CODE_COOLDOWN) return T.code.cooldown;
@@ -687,7 +813,15 @@ export class EngieApp {
         await this.signedIn(result.tokens);
         return T.code.notNeeded;
       }
-      this.pending = { ...result.pending, account: this.config.account };
+      this.dropPending();
+      const pending = { ...result.pending, account: this.config.account };
+      this.pending = pending;
+      // The Auth0 cookies and the PKCE verifier are forgotten after 10 minutes.
+      this.pendingTimer = this.timers.setTimeout(async () => {
+        if (this.pending !== pending) return;
+        this.dropPending();
+        if (this.blocked === 'needs_code') await this.setStatus(false, T.needsCode);
+      }, PENDING_LIFETIME);
       this.blocked = 'needs_code';
       this.logger.info(`ENGIE verification code requested (${channel})`);
       await this.setStatus(false, T.code.sent(this.pending.channel));
@@ -700,12 +834,8 @@ export class EngieApp {
     if (!fields || typeof fields !== 'object' || !('code' in fields)) return T.code.needsFields;
     const code = String(fields.code ?? '').replace(/[\s-]/g, '');
     if (!/^\d{4,10}$/.test(code)) return T.code.badFormat;
-    if (
-      !this.pending ||
-      this.pending.account !== this.config.account ||
-      this.now() - this.pending.at > PENDING_LIFETIME
-    ) {
-      this.pending = undefined;
+    if (!this.pendingAlive() || this.pending.account !== this.config.account) {
+      this.dropPending();
       return T.code.noPending;
     }
     const paused = this.pauseMessage();
@@ -726,9 +856,10 @@ export class EngieApp {
 
   /** A new session: kept, the blocks lifted, one read at once. */
   async signedIn(tokens) {
-    this.pending = undefined;
-    this.client.setSession(tokens);
-    await this.keepSession(tokens);
+    this.dropPending();
+    this.refusedFor = undefined;
+    this.client.setSession(tokens, this.config.account);
+    await this.keepSession(tokens, this.config.account);
     this.blocked = undefined;
     this.memory.sessionRetries = 0;
     this.memory.sessionRetryAt = undefined;
@@ -742,13 +873,14 @@ export class EngieApp {
     this.logger.warn(`ENGIE verification: ${reasonOf(err)}`);
     switch (code) {
       case 'refused':
-        this.pending = undefined;
+        this.dropPending();
+        this.refusedFor = fingerprint(this.config);
         await this.setStatus(false, T.refused);
         return T.refused;
       case 'code_refused':
         return T.code.refused;
       case 'code_expired':
-        this.pending = undefined;
+        this.dropPending();
         return T.code.expired;
       case 'login_changed':
         await this.setStatus(false, T.loginChanged);

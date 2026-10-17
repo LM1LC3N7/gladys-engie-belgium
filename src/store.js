@@ -11,7 +11,7 @@
 // sign-in between the two code buttons stays in memory (10 minutes at most).
 // -----------------------------------------------------------------------------
 
-import { readFile, rename, writeFile } from 'node:fs/promises';
+import { open, readFile, rename } from 'node:fs/promises';
 
 export const STATE_FILE = '/data/engie-state.json';
 
@@ -30,11 +30,23 @@ export function fileStore(path = STATE_FILE) {
       const text = JSON.stringify(data);
       const write = chain.then(async () => {
         const temporary = `${path}.tmp`;
-        await writeFile(temporary, text, { mode: 0o600 });
+        const file = await open(temporary, 'w', 0o600);
+        try {
+          await file.writeFile(text);
+          // On disk before the rename: a power cut never leaves an empty
+          // file in place of the rotated refresh token.
+          await file.sync();
+        } finally {
+          await file.close();
+        }
         await rename(temporary, path);
       });
       chain = write.catch(() => {});
       return write;
+    },
+    /** Resolves once every write asked so far is done. */
+    flush() {
+      return chain;
     },
   };
 }
@@ -49,8 +61,11 @@ export function memoryStore(initial = null) {
     },
     async save(value) {
       this.saves += 1;
+      if (this.failing) throw new Error('disk full');
       data = JSON.parse(JSON.stringify(value));
     },
+    async flush() {},
+    failing: false,
     peek: () => data,
   };
 }

@@ -11,9 +11,14 @@ import {
   HOUR,
   KEEP_ALIVE_INTERVAL,
   MINUTE,
+  PENDING_LIFETIME,
   POLL_INTERVAL,
   RATE_LIMIT_MAX,
+  RETRY_BACKOFF,
   SESSION_RETRY,
+  TEST_COOLDOWN,
+  USER_AGENT_BROWSER,
+  USER_AGENT_NATIVE,
 } from '../src/constants.js';
 import { registerHandlers } from '../src/handlers.js';
 import { memoryStore } from '../src/store.js';
@@ -310,18 +315,224 @@ test('a secondary read that fails keeps the others and the previous values', asy
   assert.match(status(gladys).message.en, /advance invoices/);
 });
 
-test('a passing failure of the main read: the next try is the next regular read', async () => {
-  const { gladys, timers } = await setup({
+test('a passing failure of the main read: 15 min, 30 min..., reset by a success', async () => {
+  let fail = true;
+  const { app, gladys, timers, clock } = await setup({
     memory: KEPT,
-    overrides: { relations: () => json({}, 502) },
+    overrides: { relations: () => (fail ? json({}, 502) : undefined) },
   });
   assert.equal(status(gladys).connected, false);
-  assert.match(status(gladys).message.en, /ENGIE answered 502/);
-  assert.equal(timers.timeouts().length, 0);
+  assert.match(status(gladys).message.en, /ENGIE answered 502.*15 min/);
+  assert.deepEqual(
+    timers.timeouts().map((t) => t.ms),
+    [RETRY_BACKOFF[0]],
+  );
   assert.deepEqual(
     timers.intervals().map((t) => t.ms),
     [POLL_INTERVAL, KEEP_ALIVE_INTERVAL],
   );
+  clock.now += RETRY_BACKOFF[0];
+  await timers.runTimeouts();
+  await app.idle();
+  assert.deepEqual(
+    timers.timeouts().map((t) => t.ms),
+    [RETRY_BACKOFF[1]],
+  );
+  assert.ok(RETRY_BACKOFF.every((d) => d <= POLL_INTERVAL));
+  fail = false;
+  await timers.runTimeouts();
+  await app.idle();
+  assert.equal(status(gladys).connected, true);
+  assert.equal(app.failures, 0);
+});
+
+test('a 4xx or changed pages: no quick retry, the next regular read', async () => {
+  const { gladys, timers } = await setup({
+    memory: KEPT,
+    overrides: { relations: () => json({}, 403) },
+  });
+  assert.match(status(gladys).message.en, /refused access/);
+  assert.equal(timers.timeouts().length, 0);
+});
+
+test('the keep-alive shares the exclusivity of the reads; a swapped session never takes its result', async () => {
+  const { app, store, clock } = await setup({ memory: KEPT });
+  clock.now += HOUR;
+  // During a read: no refresh.
+  let release;
+  app.running = new Promise((resolve) => {
+    release = resolve;
+  });
+  assert.equal(app.keepAlive(), undefined);
+  release();
+  app.running = undefined;
+  // A refresh that ends after the session changed (another account) is dropped.
+  let finish;
+  const tokens = engie.named('POST token').length;
+  app.client.refreshImpl = () =>
+    new Promise((resolve) => {
+      finish = resolve;
+    });
+  const pending = app.keepAlive();
+  app.client.setSession({ refreshToken: 'other' }, 'b'.repeat(16));
+  finish({ accessToken: 'x', refreshToken: 'stolen', expiresAt: clock.now + 60_000 });
+  await pending;
+  assert.equal(app.client.session.refreshToken, 'other');
+  assert.equal(store.peek().session.refreshToken, 'refresh-1');
+  assert.equal(engie.named('POST token').length, tokens);
+  // A rotated token of another account is never written under this one.
+  await app.keepSession({ refreshToken: 'foreign' }, 'c'.repeat(16));
+  assert.equal(store.peek().session.refreshToken, 'refresh-1');
+});
+
+test('no ghost meter: an EAN of the prices without an active contract is left out', async () => {
+  const contracts = {
+    items: [
+      ...F.CONTRACTS.items,
+      {
+        servicePointNumber: '541448820000000003_ID1',
+        division: 'ELECTRICITY',
+        status: 'INACTIVE',
+      },
+    ],
+  };
+  const prices = {
+    items: [...F.PRICES.items, { ean: '541448820000000003_ID1', prices: F.PRICES.items[1].prices }],
+  };
+  const { app, gladys } = await setup({
+    memory: KEPT,
+    overrides: { contracts: () => json(contracts), prices: () => json(prices) },
+  });
+  assert.equal(gladys.fake.discoveredDevices.length, 3);
+  await createAll(gladys, app);
+  assert.equal(gladys.fake.publishedEnergyConsumption.length, 1);
+});
+
+test('contracts never read: an agreement with one energy only guesses its meters', async () => {
+  const relations = structuredClone(F.RELATIONS);
+  relations.items[0].customerAccount.businessAgreements[0].gasContract = null;
+  const prices = { items: [F.PRICES.items[0]] };
+  const { gladys } = await setup({
+    memory: KEPT,
+    overrides: {
+      relations: () => json(relations),
+      contracts: () => json({}, 500),
+      prices: () => json(prices),
+    },
+  });
+  assert.deepEqual(
+    gladys.fake.discoveredDevices.map((d) => d.external_id),
+    [ELEC, ACCOUNT],
+  );
+});
+
+test('a refused password is never sent again until it changes; a 401 after the code ends the sign-in', async () => {
+  const { app } = await setup({ seed: false, config: { ...CONFIG, password: 'wrong' } });
+  assert.match((await app.requestCode({ channel: 'sms' })).en, /refused the e-mail/);
+  const posts = engie.named('POST password').length;
+  app.memory.codeAt = undefined;
+  assert.match((await app.requestCode({ channel: 'sms' })).en, /change the e-mail or the password/);
+  assert.equal(engie.named('POST password').length, posts);
+  engie.restore();
+
+  const second = await setup({
+    seed: false,
+    overrides: {
+      'GET resume': (call, e) => (e.flow.codeAccepted ? json({}, 401) : undefined),
+    },
+  });
+  await second.app.requestCode({ channel: 'sms' });
+  assert.match((await second.app.verifyCode({ code: F.CODE })).en, /expired/);
+  assert.equal(second.app.pending, undefined);
+});
+
+test('the waiting sign-in is forgotten after 10 minutes', async () => {
+  const { app, gladys, timers } = await setup({ seed: false });
+  await app.requestCode({ channel: 'sms' });
+  const timer = timers.timeouts().find((t) => t.ms === PENDING_LIFETIME);
+  assert.ok(timer);
+  timers.pending.delete(timer.id);
+  await timer.fn();
+  assert.equal(app.pending, undefined);
+  assert.match(status(gladys).message.en, /asks for a verification code/);
+});
+
+test('the test button says "slow" when its 50 s run out', async () => {
+  let release;
+  let hang = false;
+  const { app, timers, clock } = await setup({
+    memory: KEPT,
+    overrides: {
+      relations: () =>
+        hang
+          ? new Promise((resolve) => {
+              release = () => resolve(json(F.RELATIONS));
+            })
+          : undefined,
+    },
+  });
+  hang = true;
+  clock.now += TEST_COOLDOWN;
+  const answer = app.testConnection();
+  await new Promise((resolve) => setImmediate(resolve));
+  const late = timers.timeouts().find((t) => t.ms === 50_000);
+  timers.pending.delete(late.id);
+  await late.fn();
+  assert.match((await answer).en, /slow/);
+  release?.();
+  await app.idle();
+});
+
+test('dates read back from /data are bounded', async () => {
+  const far = Date.now() + 365 * 24 * HOUR;
+  const { app, clock } = await setup({
+    memory: { ...KEPT, rateLimitedUntil: far, sessionRetryAt: far, codeAt: far },
+  });
+  assert.ok(app.pausedUntil <= clock.now + RATE_LIMIT_MAX);
+  assert.ok(app.memory.sessionRetryAt <= clock.now + 24 * HOUR);
+  assert.ok(app.memory.codeAt <= clock.now);
+});
+
+test('a failed write to /data is logged and shown, without the token', async () => {
+  const { app, gladys, store, logger, clock } = await setup({ memory: KEPT });
+  store.failing = true;
+  clock.now += HOUR;
+  await app.keepAlive();
+  assert.match(status(gladys).message.en, /could not be written to \/data/);
+  assert.ok(logger.lines.some((l) => /Saving the state to \/data failed/.test(l)));
+  assertNoSecret(logger);
+});
+
+test('a 401 of one secondary endpoint, with a token the others accept, stays secondary', async () => {
+  const { app, gladys } = await setup({
+    memory: KEPT,
+    overrides: { balance: () => json({}, 401) },
+  });
+  assert.equal(status(gladys).connected, true);
+  assert.match(status(gladys).message.en, /balance/);
+  assert.equal(app.blocked, undefined);
+});
+
+test('a 400 of the energy monitoring is sent again without the latest day', async () => {
+  const { app, gladys } = await setup({ memory: KEPT });
+  const original = gladys.publishEnergyConsumption.bind(gladys);
+  const sent = [];
+  gladys.publishEnergyConsumption = async (feature, intervals) => {
+    sent.push(intervals.length);
+    if (sent.length === 1) {
+      const err = new Error('not elapsed');
+      err.status = 400;
+      throw err;
+    }
+    return original(feature, intervals);
+  };
+  await createAll(gladys, app);
+  assert.deepEqual(sent, [6, 5]);
+});
+
+test('the user agents name the integration', () => {
+  assert.match(USER_AGENT_NATIVE, /gladys-engie-belgium\/\d+\.\d+\.\d+$/);
+  assert.match(USER_AGENT_BROWSER, /gladys-engie-belgium\/\d+\.\d+\.\d+$/);
 });
 
 test('"sensor only": no consumption feature, nothing in the energy monitoring', async () => {

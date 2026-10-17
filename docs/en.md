@@ -31,9 +31,10 @@ Nothing is ever changed on your ENGIE account.
 - Gladys 5.2.0 or later.
 - A residential ENGIE Belgium account with two-step verification (ENGIE sends
   a code by SMS or e-mail at each sign-in).
-- **Advised: an ENGIE user dedicated to Gladys.** Signing in with the same
-  user on engie.be or in the ENGIE Smart app may end the session of Gladys (as
-  seen by the Home Assistant integration). You can create another user from
+- **Strongly advised: an ENGIE user dedicated to Gladys.** Otherwise, each
+  sign-in with the same user on engie.be or in the ENGIE Smart app may end the
+  session of Gladys and ask for a new code (as seen by the Home Assistant
+  integration). You can create another user from
   your ENGIE space (access management) and give it access to your customer
   number.
 - The daily consumption needs a digital meter.
@@ -96,7 +97,9 @@ your contract in the energy monitoring if you want the cost.
 - ENGIE asks to slow down (429): every call (reads, buttons) waits for the
   delay asked, between 1 minute and 6 hours, even after a restart.
 - A secondary data (consumption, balance, advance, contracts) that fails keeps
-  its previous value and never holds back the prices.
+  its previous value; the other data are read anyway.
+- A passing error (network, ENGIE unavailable): new try in 15 min, then
+  30 min, 1 h, 2 h, 4 h (never beyond 6 h).
 - Any other error: new try at the next read (within 6 hours), or with **Test
   the connection**.
 - A fresh token refused: new try in 6 h, then 12 h, then every 24 h.
@@ -105,8 +108,9 @@ your contract in the energy monitoring if you want the cost.
 
 - Unofficial API: ENGIE may change it at any time.
 - Never tested with a real account.
-- The consumption comes with ENGIE's delay; incomplete days are sent later,
-  once complete.
+- The consumption comes with ENGIE's delay; a day ENGIE marks incomplete is
+  sent later, once complete, or as it is when older than 3 days (it will not
+  change any more).
 - Several electricity (or gas) meters on one contract: the consumption, given
   per contract, is not split (only the prices are read).
 - Time zone: Europe/Brussels for the days; set Gladys to the same clock

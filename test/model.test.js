@@ -121,6 +121,35 @@ test('the daily usage: complete days only, the offtake as consumption, the gas a
   assert.deepEqual(hostile, [{ date: '2026-01-01', electricity: undefined, gas: undefined }]);
 });
 
+test('a partial day older than 3 days is kept; an inactive contract is ignored', () => {
+  const now = Date.parse('2026-10-17T12:00:00Z');
+  const day = (date) => ({
+    start: `${date}T00:00:00+02:00`,
+    end: `${addDays(date, 1)}T00:00:00+02:00`,
+    partialData: true,
+    energy: { electricity: { offtake: { kWhSum: 1 } } },
+  });
+  const days = usageDays(
+    { items: [day('2026-10-10'), day('2026-10-14'), day('2026-10-15')] },
+    now,
+    TZ,
+  );
+  assert.deepEqual(
+    days.map((d) => d.date),
+    ['2026-10-10', '2026-10-14'],
+  );
+  assert.deepEqual(
+    [
+      ...divisionsOf({
+        items: [
+          { servicePointNumber: `${F.ELEC_EAN}_ID1`, division: 'ELECTRICITY', status: 'ENDED' },
+        ],
+      }),
+    ],
+    [],
+  );
+});
+
 test('the usage window: the 7 local days before today', () => {
   const now = Date.parse('2026-03-29T12:00:00Z');
   assert.deepEqual(usageWindow(now, 7, TZ), { start: '2026-03-22', end: '2026-03-29' });

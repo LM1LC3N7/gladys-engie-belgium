@@ -60,6 +60,18 @@ export const T = {
     en: `ENGIE could not be read (${reason}): new try at the next read (within 6 h), or press "Test the connection".`,
     fr: `ENGIE n’a pas pu être lu (${reason}) : nouvel essai à la prochaine lecture (dans 6 h au plus), ou appuyez sur « Tester la connexion ».`,
   }),
+  retryIn: (reason, wait) => ({
+    en: `ENGIE could not be read (${reason}): new try in ${wait}, or press "Test the connection".`,
+    fr: `ENGIE n’a pas pu être lu (${reason}) : nouvel essai dans ${wait}, ou appuyez sur « Tester la connexion ».`,
+  }),
+  storeFailed: {
+    en: 'The session could not be written to /data: after a restart, a new verification code may be needed.',
+    fr: 'La session n’a pas pu être écrite dans /data : après un redémarrage, un nouveau code de vérification peut être nécessaire.',
+  },
+  passwordRefused: {
+    en: 'ENGIE refused this password: change the e-mail or the password and save before sending a new code.',
+    fr: 'ENGIE a refusé ce mot de passe : changez l’e-mail ou le mot de passe et enregistrez avant de renvoyer un code.',
+  },
   connecting: {
     en: 'Connecting to ENGIE…',
     fr: 'Connexion à ENGIE…',

@@ -447,7 +447,12 @@ export async function submitCode(pending, code, { timeout } = {}) {
       answer.status,
     );
   }
-  const resumed = await resume(pending.jar, pending.loginState, timeout);
+  const resumed = await resume(pending.jar, pending.loginState, timeout).catch((err) => {
+    // A 401 here: the Auth0 sign-in behind the code expired; start again.
+    throw err.code === 'refused'
+      ? new EngieError('code_expired', 'ENGIE ended this sign-in', err.status)
+      : err;
+  });
   if (!isCallback(resumed.location)) {
     throw new EngieError('login_changed', 'ENGIE did not finish the sign-in');
   }

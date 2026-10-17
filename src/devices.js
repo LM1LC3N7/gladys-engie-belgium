@@ -107,7 +107,7 @@ function priceFeatures(external, meter) {
   const offtake = meter.prices.offtake ?? {};
   const label = meter.kind === KIND.GAS ? 'Gas price' : 'Electricity price';
   const features = [];
-  if (offtake.total !== undefined || (offtake.day === undefined && offtake.night === undefined)) {
+  if (offtake.total !== undefined) {
     features.push(price(external, FEATURE.PRICE, `${label} (€/kWh)`));
   }
   if (meter.kind === KIND.ELECTRICITY) {

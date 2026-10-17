@@ -75,8 +75,9 @@ test/                             node --test, against the SDK's fake Gladys and
   gas NEVER goes there (the core would bill it at the electricity tariff),
   nor the injection: plain sensors.
 - **Be polite with ENGIE**: one read every 6 hours, a token refresh every
-  hour; a 429 pauses every path (1 min to 6 h, kept in `/data`); an error is
-  never read again sooner than the next regular read; a refused fresh token
+  hour; a 429 pauses every path (1 min to 6 h, kept in `/data`); a passing
+  failure (network, 5xx) is tried again after 15 min, 30 min, 1 h, 2 h, 4 h,
+  any other one at the next regular read; a refused fresh token
   is tried again after 6 h, 12 h, then every 24 h (kept in `/data`).
 - **A secondary read never blocks the main data**: only the account
   relations fail a cycle; any other read keeps its previous values.

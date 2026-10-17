@@ -136,6 +136,42 @@
 - **Time zone**: Europe/Brussels for the days, the usage window and the
   price period.
 
+### After the review (Milestone 1 fixes)
+
+- **Passing failures** (network, timeout, 5xx, a broken answer) are tried
+  again after 15 min, 30 min, 1 h, 2 h, 4 h (each bounded by the 6-hour
+  read), reset by a success; changed pages, a refused password, a 4xx, a 429
+  and a refused session keep their own rules (this replaces "the next
+  regular read" for passing failures only).
+- **Keep-alive under the same exclusivity as a read** (`running`); a refresh
+  binds its session and account at the start and its result is dropped if the
+  session changed meanwhile; a rotated token is written only under the
+  account it was obtained for. `start()` waits for `stop()`, which waits (5 s
+  at most) for the read, the refresh and the writes to /data in progress.
+- **Refreshes always use the full HTTP timeout** (20 s), buttons included
+  (they are bounded by their 50 s answer instead): a token rotated by ENGIE
+  and lost to a short timeout would kill the session.
+- **No ghost meter**: only ACTIVE contracts give an EAN its division; an EAN
+  of the prices without a contract is guessed from the only energy of the
+  agreement only while its contracts were never read, else left out.
+- **Partial days**: kept when older than 3 days (ENGIE also flags final days
+  as partial); recent ones wait.
+- **Refused password**: "Send the verification code" refuses at once (no
+  request) until the e-mail or the password changes (a fingerprint in
+  memory, never the password).
+- **401 on the resume after the code** -> "sign-in expired" (send again).
+- **Waiting sign-in** forgotten by a timer after 10 minutes (cookies, PKCE).
+- **Dates read back from /data bounded** (pause <= 6 h, new try <= 24 h,
+  last code <= now).
+- **Failed write to /data**: logged as an error (no path, no content) and
+  shown in the status; the file is fsynced before the rename.
+- **A 401 of one endpoint with a token the others accepted** stays a
+  secondary failure (not a refused session).
+- **User agents** end with `gladys-engie-belgium/<version>`.
+- **A 400 of publishEnergyConsumption** (Gladys clock behind Brussels): sent
+  again without the latest day.
+- **Price feature** only when ENGIE gives a single-rate price.
+
 ## Ideas
 
 - The gas in the energy monitoring once the core handles gas contracts.

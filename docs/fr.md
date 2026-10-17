@@ -32,9 +32,10 @@ Rien n'est jamais modifié sur votre compte ENGIE.
 - Gladys 5.2.0 ou plus récent.
 - Un compte ENGIE Belgique de particulier, avec la double authentification
   (ENGIE envoie un code par SMS ou e-mail à chaque connexion).
-- **Conseillé : un utilisateur ENGIE dédié à Gladys.** Se connecter avec le
-  même utilisateur sur engie.be ou dans l'application ENGIE Smart peut mettre
-  fin à la session de Gladys (constaté par l'intégration Home Assistant). Vous
+- **Fortement conseillé : un utilisateur ENGIE dédié à Gladys.** Sinon, chaque
+  connexion avec le même utilisateur sur engie.be ou dans l'application ENGIE
+  Smart peut mettre fin à la session de Gladys et demander un nouveau code
+  (constaté par l'intégration Home Assistant). Vous
   pouvez créer un utilisateur supplémentaire depuis votre espace ENGIE
   (gestion des accès) et lui donner accès à votre numéro de client.
 - La consommation par jour demande un compteur numérique.
@@ -102,7 +103,9 @@ le coût.
   suspendus le temps demandé, entre 1 minute et 6 heures, même après un
   redémarrage.
 - Une donnée secondaire (consommation, solde, acompte, contrats) qui échoue
-  garde sa valeur précédente et ne bloque jamais les prix.
+  garde sa valeur précédente ; les autres données sont lues quand même.
+- Une erreur passagère (réseau, ENGIE indisponible) : nouvel essai dans
+  15 min, puis 30 min, 1 h, 2 h, 4 h (jamais au-delà de 6 h).
 - Une autre erreur : nouvel essai à la lecture suivante (6 heures au plus), ou
   avec **Tester la connexion**.
 - Un jeton tout neuf refusé : nouvel essai dans 6 h, puis 12 h, puis toutes les
@@ -112,8 +115,9 @@ le coût.
 
 - API non officielle : ENGIE peut la changer à tout moment.
 - Jamais testé avec un vrai compte.
-- La consommation arrive avec le retard d'ENGIE ; les jours incomplets sont
-  envoyés plus tard, une fois complets.
+- La consommation arrive avec le retard d'ENGIE ; un jour marqué incomplet
+  par ENGIE est envoyé plus tard, une fois complet, ou tel quel s'il a plus de
+  3 jours (il ne changera plus).
 - Plusieurs compteurs d'électricité (ou de gaz) sur un même contrat : la
   consommation, donnée par contrat, n'est pas répartie (seuls les prix sont
   lus).

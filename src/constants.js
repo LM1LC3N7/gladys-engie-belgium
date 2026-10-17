@@ -3,6 +3,8 @@
 // feature keys, manifest keys) is forever: never rename one.
 // -----------------------------------------------------------------------------
 
+import { readFileSync } from 'node:fs';
+
 export const ACTIONS = {
   TEST_CONNECTION: 'test_connection',
   REQUEST_CODE: 'request_code',
@@ -38,11 +40,18 @@ export const REDIRECT_URI = 'be.engie.smart://login-callback/nl';
 export const OAUTH_SCOPES = 'openid profile roles offline_access';
 export const OAUTH_AUDIENCE = 'customer';
 
-// The login pages are the app's web view; the API calls are the app's.
-export const USER_AGENT_BROWSER =
-  'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Mobile Safari/537.36';
-export const USER_AGENT_NATIVE =
-  'Dalvik/2.1.0 (Linux; U; Android 16; Pixel 6 Build/BP4A.251205.006)';
+/** The version of the integration (package.json, bumped by the Release workflow). */
+export const VERSION = (() => {
+  try {
+    return JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version;
+  } catch {
+    return 'unknown';
+  }
+})();
+// The login pages are the app's web view; the API calls are the app's. Both
+// say who is calling, as the library does with its own name.
+export const USER_AGENT_BROWSER = `Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Mobile Safari/537.36 gladys-engie-belgium/${VERSION}`;
+export const USER_AGENT_NATIVE = `Dalvik/2.1.0 (Linux; U; Android 16; Pixel 6 Build/BP4A.251205.006) gladys-engie-belgium/${VERSION}`;
 
 export const HTTP_TIMEOUT = 20_000;
 /** The buttons answer within 60 s: shorter requests there. */
@@ -69,6 +78,17 @@ export const TOKEN_SKEW = 30_000;
 export const USAGE_DAYS = 7;
 /** A refused session (a fresh token refused): one new try after 6 h, 12 h, then every 24 h. */
 export const SESSION_RETRY = [6 * HOUR, 12 * HOUR, 24 * HOUR];
+/**
+ * A passing failure (network, timeout, 5xx, a broken answer): new tries after
+ * 15, 30, 60, 120, 240 minutes, never later than the regular read.
+ */
+export const RETRY_BACKOFF = [15 * MINUTE, 30 * MINUTE, HOUR, 2 * HOUR, 4 * HOUR].map((d) =>
+  Math.min(d, POLL_INTERVAL),
+);
+/** A day flagged partial by ENGIE is published anyway once older than this (it will not change). */
+export const PARTIAL_DAY_AGE = 3;
+/** stop() waits at most this long for a read, a refresh or a write in progress. */
+export const STOP_WAIT = 5_000;
 /** 429: every path waits, between 1 minute and 6 hours whatever Retry-After says. */
 export const RATE_LIMIT_DEFAULT = 15 * MINUTE;
 export const RATE_LIMIT_MIN = MINUTE;

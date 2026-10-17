@@ -46,8 +46,9 @@ Gladys ⇄ SDK ⇄ src/handlers.js ⇄ src/app.js (EngieApp)
   meter integration already feeds it.
 - **Errors**: 429 -> every path paused (Retry-After, 1 min to 6 h), kept in
   `/data`; 401 -> one refresh and one retry, then spaced new tries (6 h, 12 h,
-  24 h, kept in `/data`); a dead refresh token -> a new code is asked; any
-  other failure -> the next regular read, never sooner. Bodies read up to
+  24 h, kept in `/data`); a dead refresh token -> a new code is asked;
+  network or 5xx -> 15 min, 30 min, 1 h, 2 h, 4 h; any other failure -> the
+  next regular read. Bodies read up to
   1 MiB, HTML parsed linearly, no remote text in a log or a status.
 
 ## Credits

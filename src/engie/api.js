@@ -20,13 +20,23 @@ export class EngieClient {
     this.refreshImpl = refresh;
     /** `{ accessToken, refreshToken, expiresAt }` or null. */
     this.session = null;
+    /** The account (hash of the e-mail) the session belongs to. */
+    this.account = undefined;
     this.refreshing = undefined;
-    /** Request timeout (shorter for the buttons); undefined: the default one. */
+    /** The last access token a data call accepted. */
+    this.lastOkToken = undefined;
+    /**
+     * Request timeout of the data calls (shorter for the buttons); undefined:
+     * the default one. Never applied to a refresh: a token rotated by ENGIE
+     * and lost to a short timeout would kill the session.
+     */
     this.timeout = undefined;
   }
 
-  setSession(session) {
+  setSession(session, account) {
     this.session = session?.refreshToken ? { ...session } : null;
+    this.account = this.session ? account : undefined;
+    this.lastOkToken = undefined;
   }
 
   get hasSession() {
@@ -50,9 +60,16 @@ export class EngieClient {
     if (!this.session?.refreshToken) {
       throw new EngieError('grant_refused', 'No ENGIE session: a verification code is needed');
     }
-    const tokens = await this.refreshImpl(this.session.refreshToken, { timeout: this.timeout });
+    // The session and its account are bound at the start: a session replaced
+    // meanwhile (another account, a new code) never takes this result.
+    const started = this.session;
+    const account = this.account;
+    const tokens = await this.refreshImpl(started.refreshToken, {});
+    if (this.session !== started) {
+      throw new EngieError('session_changed', 'The ENGIE session changed during a refresh');
+    }
     this.session = tokens;
-    await this.onTokens(tokens);
+    await this.onTokens(tokens, account);
     return tokens;
   }
 
@@ -70,26 +87,35 @@ export class EngieClient {
     for (const [key, value] of Object.entries(params)) {
       target.searchParams.set(key, value);
     }
+    let entryToken;
     for (let attempt = 0; ; attempt += 1) {
+      const token = this.session.accessToken;
       const answer = await send(target.href, {
         headers: {
           Accept: 'application/json, application/problem+json',
           'User-Agent': userAgent,
-          Authorization: `Bearer ${this.session.accessToken}`,
+          Authorization: `Bearer ${token}`,
         },
         timeout: this.timeout,
       });
       if (answer.status === 401) {
         if (attempt > 0) {
+          // The token refused here worked for another call: this endpoint
+          // only refuses it (a passing data error, not a dead session).
+          if (entryToken !== undefined && entryToken === this.lastOkToken) {
+            throw dataError(401);
+          }
           // A token just refreshed is refused: no loop, a spaced new try.
           throw new EngieError('session_refused', 'ENGIE refused a fresh access token', 401);
         }
+        entryToken = token;
         await this.refresh();
         continue;
       }
       if (answer.status < 200 || answer.status >= 300) {
         throw dataError(answer.status);
       }
+      this.lastOkToken = token;
       const json = parseJson(answer.text);
       if (!json || typeof json !== 'object' || Array.isArray(json)) {
         throw new EngieError('bad_response', 'ENGIE answered something else than JSON');

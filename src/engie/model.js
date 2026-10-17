@@ -95,11 +95,15 @@ export function agreementsOf(relations) {
 
 const DIVISIONS = new Set(['ELECTRICITY', 'GAS']);
 
-/** EAN -> ELECTRICITY | GAS, from the energy contracts of a business agreement. */
+/**
+ * EAN -> ELECTRICITY | GAS, from the ACTIVE energy contracts of a business
+ * agreement (as hass-engie-be `_contracts.py`).
+ */
 export function divisionsOf(contracts) {
   const divisions = new Map();
   for (const item of list(object(contracts).items)) {
     const c = object(item);
+    if (c.status !== 'ACTIVE') continue;
     const ean = bareEan(c.servicePointNumber);
     const division = typeof c.division === 'string' ? c.division.toUpperCase() : '';
     if (ean && DIVISIONS.has(division)) {
@@ -184,17 +188,20 @@ export function pricesOf(json, today) {
 /**
  * The complete days of a DAILY usage answer, oldest first:
  * `[{ date, electricity: { consumption, injection } | undefined, gas | undefined }]`.
- * A day still running, ending after `now`, or marked partial is left out (it
- * comes back complete at a later read; the core upserts by date).
+ * A day still running (ending after `now`) is left out. A recent day marked
+ * partial is left out too (it comes back complete at a later read; the core
+ * upserts by date); one older than `partialAge` days is kept: ENGIE also
+ * flags final days that way, and it will not change any more.
  */
-export function usageDays(json, now, timeZone) {
+export function usageDays(json, now, timeZone, partialAge = 3) {
   const byDate = new Map();
+  const oldest = addDays(localDate(now, timeZone), -partialAge);
   for (const raw of list(object(json).items)) {
     const item = object(raw);
     const start = Date.parse(item.start);
     const end = Date.parse(item.end);
     if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start || end > now) continue;
-    if (item.partialData === true) continue;
+    if (item.partialData === true && localDate(start, timeZone) > oldest) continue;
     const energy = object(item.energy);
     const elec =
       energy.electricity && typeof energy.electricity === 'object'
