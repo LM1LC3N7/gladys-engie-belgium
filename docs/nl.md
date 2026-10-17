@@ -74,7 +74,8 @@ de logboeken.
 Eén lezing per 6 uur, een sessievernieuwing per uur. Vraagt ENGIE om te
 vertragen (429), dan wachten alle oproepen 1 minuut tot 6 uur, ook na een
 herstart. Een mislukte bijkomende lezing (verbruik, saldo, voorschot) houdt
-haar vorige waarde; de andere gegevens worden toch gelezen. Een tijdelijke fout
+haar vorige waarde; de andere gegevens worden toch gelezen, behalve na een 429,
+die alles pauzeert. Een tijdelijke fout
 (netwerk, ENGIE onbereikbaar): nieuwe poging na 15 min, 30 min, 1 u, 2 u, 4 u
 (nooit later dan 6 u). Een dag die ENGIE als onvolledig markeert, wordt later
 verstuurd, of zoals hij is als hij ouder is dan 3 dagen.

@@ -119,6 +119,10 @@ export const T = {
       en: `ENGIE sent a code ${CHANNEL[channel].en}: type it in "Verify the code" within 10 minutes.`,
       fr: `ENGIE a envoyé un code ${CHANNEL[channel].fr} : saisissez-le dans « Vérifier le code » d’ici 10 minutes.`,
     }),
+    changed: {
+      en: 'The configuration changed meanwhile: this sign-in was dropped. Send a new code.',
+      fr: 'La configuration a changé entre-temps : cette connexion est abandonnée. Renvoyez un code.',
+    },
     notNeeded: {
       en: 'Signed in: ENGIE asked for no code this time.',
       fr: 'Connecté : ENGIE n’a pas demandé de code cette fois.',

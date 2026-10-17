@@ -97,7 +97,8 @@ your contract in the energy monitoring if you want the cost.
 - ENGIE asks to slow down (429): every call (reads, buttons) waits for the
   delay asked, between 1 minute and 6 hours, even after a restart.
 - A secondary data (consumption, balance, advance, contracts) that fails keeps
-  its previous value; the other data are read anyway.
+  its previous value; the other data are read anyway, except after a 429,
+  which pauses everything.
 - A passing error (network, ENGIE unavailable): new try in 15 min, then
   30 min, 1 h, 2 h, 4 h (never beyond 6 h).
 - Any other error: new try at the next read (within 6 hours), or with **Test

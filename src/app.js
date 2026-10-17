@@ -138,7 +138,7 @@ export class EngieApp {
   async start(raw = {}) {
     // Nothing runs while the session is swapped: a read, a keep-alive refresh
     // or a write still going on is waited for first.
-    await this.stop();
+    await this.stop({ bounded: false });
     const generation = this.generation;
     const previous = this.config.account;
     this.config = normalizeConfig(raw);
@@ -208,17 +208,26 @@ export class EngieApp {
    * refresh and the writes to /data in progress: a rotated refresh token is
    * never lost to a shutdown.
    */
-  async stop() {
+  async stop({ bounded = true } = {}) {
     this.generation += 1;
     for (const id of this.intervals) {
       this.timers.clearInterval(id);
     }
     this.intervals = [];
     this.clearWake();
-    const work = Promise.all([
-      this.running?.catch(() => {}),
-      this.client.refreshing?.catch(() => {}),
-    ]).then(() => this.store.flush?.()?.catch(() => {}));
+    const work = (async () => {
+      // Until nothing runs any more: a job may end by starting a refresh.
+      while (this.running || this.client.refreshing) {
+        await Promise.all([this.running?.catch(() => {}), this.client.refreshing?.catch(() => {})]);
+      }
+      await this.store.flush?.()?.catch(() => {});
+    })();
+    if (!bounded) {
+      // A start (new configuration): the session is never swapped under a
+      // job, however long it takes (its requests have their own timeouts).
+      await work;
+      return;
+    }
     let timer;
     const late = new Promise((resolve) => {
       timer = setTimeout(resolve, STOP_WAIT);
@@ -304,6 +313,8 @@ export class EngieApp {
     const next = normalizeConfig(raw);
     const previous = this.config;
     if (next.email !== previous.email || next.password !== previous.password) {
+      // New credentials: a refused password may have been corrected.
+      this.refusedFor = undefined;
       return this.start(raw);
     }
     this.config = next;
@@ -361,9 +372,18 @@ export class EngieApp {
 
   /** One run at a time: a tick during a run joins it. */
   tick({ quick = false } = {}) {
+    if (this.running && this.runningKind === 'keepalive') {
+      // A read due during the hourly refresh is not lost: it runs right after.
+      const generation = this.generation;
+      return this.running.then(() =>
+        generation === this.generation ? this.tick({ quick }) : undefined,
+      );
+    }
     if (!this.running) {
+      this.runningKind = 'read';
       this.running = this.run({ quick }).finally(() => {
         this.running = undefined;
+        this.runningKind = undefined;
       });
     }
     return this.running;
@@ -446,7 +466,8 @@ export class EngieApp {
       const divisions = await attempt('contracts', async () =>
         divisionsOf(await this.client.contracts(ban)),
       );
-      if (divisions) this.divisions.set(ban, divisions);
+      // An empty answer teaches nothing: the guess of the meters stays possible.
+      if (divisions?.size > 0) this.divisions.set(ban, divisions);
       const known = this.divisions.get(ban) ?? new Map();
       const prices = await attempt('prices', async () =>
         pricesOf(await this.client.prices(ban), today),
@@ -602,6 +623,7 @@ export class EngieApp {
       return undefined;
     }
     const generation = this.generation;
+    this.runningKind = 'keepalive';
     this.running = (async () => {
       try {
         await this.client.refresh();
@@ -617,6 +639,7 @@ export class EngieApp {
       }
     })().finally(() => {
       this.running = undefined;
+      this.runningKind = undefined;
     });
     return this.running;
   }
@@ -756,8 +779,10 @@ export class EngieApp {
   /** One button at a time, never during a read. */
   exclusive(job) {
     if (this.running) return T.busy;
+    this.runningKind = 'button';
     this.running = job().finally(() => {
       this.running = undefined;
+      this.runningKind = undefined;
     });
     return this.answer(this.running);
   }
@@ -794,27 +819,32 @@ export class EngieApp {
     if (paused) return paused;
     if (this.now() - (this.memory.codeAt ?? -Infinity) < CODE_COOLDOWN) return T.code.cooldown;
     if (this.running) return T.busy;
+    // The account is bound at the start: whatever is saved meanwhile, the
+    // result of this sign-in only ever goes to it.
+    const { account, email, password } = this.config;
     return this.exclusive(async () => {
       this.memory.codeAt = this.now();
       await this.saveMemory();
       let result;
       try {
         result = await this.login({
-          email: this.config.email,
-          password: this.config.password,
+          email,
+          password,
           channel,
           timeout: QUICK_TIMEOUT,
           now: this.now,
         });
       } catch (err) {
-        return this.codeFailure(err);
+        if (this.config.account !== account) return T.code.changed;
+        return this.codeFailure(err, { email, password });
       }
+      if (this.config.account !== account) return T.code.changed;
       if (result.tokens) {
-        await this.signedIn(result.tokens);
+        await this.signedIn(result.tokens, account);
         return T.code.notNeeded;
       }
       this.dropPending();
-      const pending = { ...result.pending, account: this.config.account };
+      const pending = { ...result.pending, account };
       this.pending = pending;
       // The Auth0 cookies and the PKCE verifier are forgotten after 10 minutes.
       this.pendingTimer = this.timers.setTimeout(async () => {
@@ -841,25 +871,34 @@ export class EngieApp {
     const paused = this.pauseMessage();
     if (paused) return paused;
     if (this.running) return T.busy;
+    const { account } = this.config;
+    const pending = this.pending;
     return this.exclusive(async () => {
       let tokens;
       try {
-        tokens = await this.verify(this.pending, code, { timeout: QUICK_TIMEOUT });
+        tokens = await this.verify(pending, code, { timeout: QUICK_TIMEOUT });
       } catch (err) {
-        return this.codeFailure(err);
+        if (this.config.account !== account) return T.code.changed;
+        return this.codeFailure(err, this.config);
       }
+      if (this.config.account !== account) return T.code.changed;
       this.logger.info('ENGIE verification code accepted');
-      await this.signedIn(tokens);
+      await this.signedIn(tokens, account);
       return T.code.verified;
     });
   }
 
-  /** A new session: kept, the blocks lifted, one read at once. */
-  async signedIn(tokens) {
+  /**
+   * A new session of `account` (bound when the button was pressed): kept, the
+   * blocks lifted, one read at once. Nothing at all when the account of the
+   * configuration changed meanwhile.
+   */
+  async signedIn(tokens, account) {
+    if (account !== this.config.account) return;
     this.dropPending();
     this.refusedFor = undefined;
-    this.client.setSession(tokens, this.config.account);
-    await this.keepSession(tokens, this.config.account);
+    this.client.setSession(tokens, account);
+    await this.keepSession(tokens, account);
     this.blocked = undefined;
     this.memory.sessionRetries = 0;
     this.memory.sessionRetryAt = undefined;
@@ -868,13 +907,13 @@ export class EngieApp {
   }
 
   /** An error of the code buttons -> the message under the button. */
-  async codeFailure(err) {
+  async codeFailure(err, credentials = this.config) {
     const code = codeOf(err);
     this.logger.warn(`ENGIE verification: ${reasonOf(err)}`);
     switch (code) {
       case 'refused':
         this.dropPending();
-        this.refusedFor = fingerprint(this.config);
+        this.refusedFor = fingerprint(credentials);
         await this.setStatus(false, T.refused);
         return T.refused;
       case 'code_refused':

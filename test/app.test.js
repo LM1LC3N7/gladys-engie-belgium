@@ -22,7 +22,7 @@ import {
 } from '../src/constants.js';
 import { registerHandlers } from '../src/handlers.js';
 import { memoryStore } from '../src/store.js';
-import { installEngie, json } from './helpers/fakeEngie.js';
+import { installEngie, json, jwt } from './helpers/fakeEngie.js';
 import { createFakeTimers } from './helpers/fakeTimers.js';
 import * as F from './fixtures/engie.js';
 
@@ -528,6 +528,98 @@ test('a 400 of the energy monitoring is sent again without the latest day', asyn
   };
   await createAll(gladys, app);
   assert.deepEqual(sent, [6, 5]);
+});
+
+test('a button running while another account is saved: its session never goes to the new account', async () => {
+  const { app, store } = await setup({ seed: false });
+  const B = { email: 'other@example.be', password: 'other' };
+  // "Send the code" for A, slow; B is saved meanwhile.
+  let finish;
+  app.login = () =>
+    new Promise((resolve) => {
+      finish = resolve;
+    });
+  const answer = app.requestCode({ channel: 'sms' });
+  const saved = app.configUpdated(B);
+  await new Promise((resolve) => setImmediate(resolve));
+  // The start of B waits for the button.
+  assert.equal(app.config.email, F.EMAIL);
+  engie.seed('RT-A');
+  finish({ tokens: { accessToken: 'a', refreshToken: 'RT-A', expiresAt: Date.now() + 60_000 } });
+  await answer;
+  await saved;
+  await app.idle();
+  // A's session (rotated by the read that followed) stays under A.
+  assert.deepEqual(store.peek().session, {
+    account: accountKey(F.EMAIL),
+    refreshToken: 'refresh-1',
+  });
+  assert.equal(app.config.email, B.email);
+  assert.equal(app.client.hasSession, false);
+  assert.equal(app.blocked, 'needs_code');
+  // A late result bound to another account changes nothing at all.
+  const saves = store.saves;
+  await app.signedIn({ accessToken: 'z', refreshToken: 'RT-late' }, accountKey(F.EMAIL));
+  assert.equal(store.saves, saves);
+  assert.equal(app.client.hasSession, false);
+  assert.equal(app.blocked, 'needs_code');
+
+  // "Verify the code" for B, slow; A is saved back meanwhile: B's session is kept under B.
+  app.memory.codeAt = undefined;
+  app.login = async () => ({ pending: { channel: 'sms', at: app.now() } });
+  await app.requestCode({ channel: 'sms' });
+  let verified;
+  app.verify = () =>
+    new Promise((resolve) => {
+      verified = resolve;
+    });
+  const check = app.verifyCode({ code: F.CODE });
+  const back = app.configUpdated(CONFIG);
+  await new Promise((resolve) => setImmediate(resolve));
+  verified({
+    accessToken: jwt(Date.now() + 60_000),
+    refreshToken: 'RT-B',
+    expiresAt: Date.now() + 60_000,
+  });
+  await check;
+  await back;
+  await app.idle();
+  // B's token was never written under A, nor used by A's client.
+  const kept = store.peek().session;
+  assert.ok(!(kept?.account === accountKey(F.EMAIL) && kept.refreshToken === 'RT-B'));
+  assert.equal(app.config.email, F.EMAIL);
+  assert.notEqual(app.client.session?.refreshToken, 'RT-B');
+});
+
+test('a read due during the hourly refresh runs right after it', async () => {
+  const { app, clock } = await setup({ memory: KEPT });
+  const reads = engie.named('relations').length;
+  clock.now += HOUR;
+  const refresh = app.keepAlive();
+  const read = app.tick();
+  await refresh;
+  await read;
+  assert.equal(engie.named('relations').length, reads + 1);
+});
+
+test('an empty answer of the contracts keeps the guess of the meters; a new password lifts a refusal', async () => {
+  const relations = structuredClone(F.RELATIONS);
+  relations.items[0].customerAccount.businessAgreements[0].gasContract = null;
+  const { app, gladys } = await setup({
+    memory: KEPT,
+    overrides: {
+      relations: () => json(relations),
+      contracts: () => json({ items: [] }),
+      prices: () => json({ items: [F.PRICES.items[0]] }),
+    },
+  });
+  assert.deepEqual(
+    gladys.fake.discoveredDevices.map((d) => d.external_id),
+    [ELEC, ACCOUNT],
+  );
+  app.refusedFor = 'x';
+  await app.configUpdated({ ...CONFIG, password: 'new one' });
+  assert.equal(app.refusedFor, undefined);
 });
 
 test('the user agents name the integration', () => {

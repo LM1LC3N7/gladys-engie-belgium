@@ -172,6 +172,18 @@
   again without the latest day.
 - **Price feature** only when ENGIE gives a single-rate price.
 
+### After the approval round 1
+
+- **A start waits for every job without bound** (`stop({ bounded: false })`):
+  a button, a read or a refresh in progress always ends before the session
+  and the account are swapped; only the shutdown is bounded (5 s). Each
+  button also binds its account when pressed: a result for another account
+  is dropped (no session set, no block lifted, nothing written).
+- **A read due during the hourly refresh** runs right after it.
+- **Saving new credentials** lifts a password refusal.
+- **An empty answer of the contracts** teaches nothing: the guess of the
+  meters stays possible.
+
 ## Ideas
 
 - The gas in the energy monitoring once the core handles gas contracts.

@@ -103,7 +103,8 @@ le coût.
   suspendus le temps demandé, entre 1 minute et 6 heures, même après un
   redémarrage.
 - Une donnée secondaire (consommation, solde, acompte, contrats) qui échoue
-  garde sa valeur précédente ; les autres données sont lues quand même.
+  garde sa valeur précédente ; les autres données sont lues quand même, sauf
+  un 429, qui suspend tout.
 - Une erreur passagère (réseau, ENGIE indisponible) : nouvel essai dans
   15 min, puis 30 min, 1 h, 2 h, 4 h (jamais au-delà de 6 h).
 - Une autre erreur : nouvel essai à la lecture suivante (6 heures au plus), ou
