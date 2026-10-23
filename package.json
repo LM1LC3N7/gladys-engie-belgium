@@ -1,6 +1,6 @@
 {
   "name": "gladys-engie-belgium",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "private": true,
   "description": "ENGIE Belgium for Gladys Assistant: the electricity and gas prices of your contract, the daily electricity consumption fed to the energy monitoring, the gas consumption, the balance and the advance invoice. Unofficial, read only.",
   "type": "module",
