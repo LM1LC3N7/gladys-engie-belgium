@@ -30,7 +30,7 @@ Er wordt nooit iets gewijzigd aan uw ENGIE-account.
 
 ## Vooraf
 
-- Gladys 5.2.0 of nieuwer.
+- Gladys 5.3.0 of nieuwer.
 - Een particulier ENGIE België-account met tweestapsverificatie (ENGIE stuurt
   bij elke aanmelding een code per sms of e-mail).
 - **Sterk aangeraden: een aparte ENGIE-gebruiker voor Gladys.** Anders kan
