@@ -9,9 +9,10 @@
   },
   "version": "0.1.2",
   "docker_image": "ghcr.io/lm1lc3n7/gladys-engie-belgium:0.1.2",
-  "gladys_version": ">=5.2.0",
+  "gladys_version": ">=5.3.0",
   "cover_image": "https://raw.githubusercontent.com/LM1LC3N7/gladys-engie-belgium/main/cover.png",
   "categories": ["energy"],
+  "countries": ["BE"],
   "transports": ["cloud"],
   "config_schema": [
     {

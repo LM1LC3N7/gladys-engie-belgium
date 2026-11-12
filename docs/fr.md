@@ -29,7 +29,7 @@ Rien n'est jamais modifié sur votre compte ENGIE.
 
 ## Avant de commencer
 
-- Gladys 5.2.0 ou plus récent.
+- Gladys 5.3.0 ou plus récent.
 - Un compte ENGIE Belgique de particulier, avec la double authentification
   (ENGIE envoie un code par SMS ou e-mail à chaque connexion).
 - **Fortement conseillé : un utilisateur ENGIE dédié à Gladys.** Sinon, chaque

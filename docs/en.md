@@ -28,7 +28,7 @@ Nothing is ever changed on your ENGIE account.
 
 ## Before you start
 
-- Gladys 5.2.0 or later.
+- Gladys 5.3.0 or later.
 - A residential ENGIE Belgium account with two-step verification (ENGIE sends
   a code by SMS or e-mail at each sign-in).
 - **Strongly advised: an ENGIE user dedicated to Gladys.** Otherwise, each

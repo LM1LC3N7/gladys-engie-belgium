@@ -2,7 +2,7 @@
 
 ## Before announcing
 
-- [ ] Test on a real Gladys 5.2+ with a real residential ENGIE Belgium account
+- [ ] Test on a real Gladys 5.3+ with a real residential ENGIE Belgium account
       (ideally a dedicated ENGIE user; electricity dual-rate with injection,
       gas): the two code buttons (SMS and e-mail), the devices, the prices,
       the daily consumption in the energy monitoring, the gas sensor, the
