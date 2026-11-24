@@ -6,8 +6,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { createFakeGladys } from '@gladysassistant/integration-sdk/testing';
 import { CONSUMPTION, DEFAULTS } from '../src/config.js';
 import { ACTIONS, CODE_CHANNELS } from '../src/constants.js';
+import { buildAccountDevice, buildMeterDevice, KIND } from '../src/devices.js';
+import { assertCoreDevice } from './helpers/coreFeature.js';
 
 const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
 const manifest = JSON.parse(read('gladys-assistant-integration.json'));
@@ -119,4 +122,33 @@ test('the catalog countries: Belgium, which needs Gladys >= 5.3.0', () => {
     .slice(1)
     .map(Number);
   assert.ok(major > 5 || (major === 5 && minor >= 3), 'countries needs Gladys 5.3.0');
+});
+
+test('every feature has a numeric min and max and the other core fields; no device is polled', () => {
+  const gladys = createFakeGladys({ selector: 'engie-belgium' });
+  const prices = {
+    offtake: { total: 0.3, day: 0.32, night: 0.28 },
+    injection: { total: 0.04 },
+  };
+  const devices = [
+    buildMeterDevice(gladys, { kind: KIND.ELECTRICITY, ean: '541448820000000001', prices }),
+    buildMeterDevice(
+      gladys,
+      { kind: KIND.ELECTRICITY, ean: '541448820000000003', prices: { offtake: {} } },
+      { consumption: CONSUMPTION.SENSOR_ONLY },
+    ),
+    buildMeterDevice(gladys, {
+      kind: KIND.GAS,
+      ean: '541448820000000002',
+      prices: { offtake: { total: 0.1 } },
+    }),
+    buildAccountDevice(gladys, { ban: '000000000001' }),
+  ];
+  let features = 0;
+  for (const device of devices) {
+    features += assertCoreDevice(device, device.external_id);
+    assert.equal(device.should_poll, false, `${device.external_id}: should_poll`);
+  }
+  // 4 prices + daily + 2 plain; 2 plain; price + plain; 4 account.
+  assert.equal(features, 7 + 2 + 2 + 4);
 });

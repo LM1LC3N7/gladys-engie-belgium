@@ -8,8 +8,8 @@ contributors.
 A Gladys Assistant **external integration**: a Node.js service (Node 22+, ESM,
 no build step) that runs in its own sandboxed Docker container and talks to
 Gladys through
-[`@gladysassistant/integration-sdk`](https://github.com/GladysAssistant/integration-sdk-js),
-its only runtime dependency. It started from the official JavaScript template.
+[`@gladysassistant/integration-sdk`](https://github.com/GladysAssistant/integration-sdk-js)
+(v0.16), its only runtime dependency. It started from the official JavaScript template.
 
 It reads a residential **ENGIE Belgium** account through the unofficial API
 of the ENGIE Smart app: the Auth0 sign-in of `account.engie.be` (e-mail,
@@ -24,7 +24,7 @@ on `api.engie.be`. The flow and the meaning of the answers are ported from
 
 ```bash
 npm install
-npm test                                  # node --test, the built-in runner
+npm test                                  # node --test --test-timeout=60000
 node --test test/app.test.js              # one file
 node --test --test-name-pattern "429"     # tests whose name matches
 npm run audit                             # npm audit --omit=dev
@@ -62,6 +62,12 @@ test/                             node --test, against the SDK's fake Gladys and
 
 ## Rules
 
+- **Features follow the core model.** Every feature has a non-empty `name`, a
+  numeric `min` and `max` (0/0 for text), boolean `read_only` and
+  `has_feedback`: Gladys refuses it otherwise, and the SDK's fake Gladys
+  (0.16.1) too; `test/helpers/coreFeature.js` checks every device kind.
+  Devices carry `should_poll: false` (Gladys 5.3 polls a device with
+  `poll_frequency` unless it says so).
 - **Read only**: GETs only on the API; `onSetValue` refuses. Never add a
   write call (the library has some: Happy Hours activation, never ported).
 - **Never a password sign-in by itself**: each sign-in sends an SMS or an

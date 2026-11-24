@@ -144,6 +144,7 @@ export function buildMeterDevice(
         ),
       ],
       params: [{ name: 'ean', value: meter.ean }],
+      should_poll: false,
     };
   }
   const monitored = consumption === CONSUMPTION.ENERGY_MONITORING;
@@ -175,6 +176,7 @@ export function buildMeterDevice(
       { name: 'ean', value: meter.ean },
       { name: 'consumption', value: consumption },
     ],
+    should_poll: false,
   };
 }
 
@@ -190,6 +192,7 @@ export function buildAccountDevice(gladys, account) {
       text(external, FEATURE.NEXT_ADVANCE_DATE, 'Next advance invoice'),
     ],
     params: [],
+    should_poll: false,
   };
 }
 

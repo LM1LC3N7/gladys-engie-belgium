@@ -12,6 +12,8 @@ the notes of the version's GitHub Release.
 
 ### Changed
 
+- Integration SDK 0.16.1 (no change for the devices). The devices now say
+  `should_poll: false` (the integration reads ENGIE on its own schedule).
 - Declared for Belgium only (`countries: ["BE"]`): the Gladys catalog of an
   instance located elsewhere no longer lists it in its browse views (the
   search still finds it). Requires Gladys 5.3.0 or later.
