@@ -190,3 +190,7 @@
 - Hourly usage (the API has it) for a 30-minute consumption feature.
 - The EPEX prices of dynamic contracts (public endpoint), the capacity tariff
   peaks, the Happy Hours (read only).
+
+## Next patch
+
+- Migration review minors: see `_lots/migration-reviews/w14-gladys-engie-belgium-r1.md`.
